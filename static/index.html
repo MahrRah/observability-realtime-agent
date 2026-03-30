@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voice Agent</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem;
+      color: #1e293b;
+      background: #f8fafc;
+      min-height: 100vh;
+    }
+    h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      margin-bottom: 1.5rem;
+      color: #0f172a;
+      letter-spacing: -0.02em;
+    }
+    .card {
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+      padding: 1.5rem;
+    }
+    .controls {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    .controls-row {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    button {
+      padding: 0.6rem 1.25rem;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    #connectBtn {
+      background: #10b981;
+      color: #fff;
+    }
+    #connectBtn:hover:not(:disabled) {
+      background: #059669;
+    }
+    #disconnectBtn {
+      background: #ef4444;
+      color: #fff;
+    }
+    #disconnectBtn:hover:not(:disabled) {
+      background: #dc2626;
+    }
+    #muteBtn {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      padding: 0;
+      justify-content: center;
+      background: #e2e8f0;
+      color: #475569;
+    }
+    #muteBtn:hover:not(:disabled) {
+      background: #cbd5e1;
+    }
+    #muteBtn.muted {
+      background: #ef4444;
+      color: #fff;
+    }
+    #muteBtn #muteBtnText {
+      display: none;
+    }
+    #muteBtn svg {
+      width: 22px;
+      height: 22px;
+    }
+    #status {
+      padding: 0.6rem 0.75rem;
+      margin-bottom: 0.75rem;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      background: #f1f5f9;
+      color: #64748b;
+      transition: all 0.3s ease;
+    }
+    #status.connected {
+      background: #dcfce7;
+      color: #166534;
+    }
+    #status.error {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+    #sessionInfo {
+      font-size: 0.75rem;
+      color: #64748b;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      margin-bottom: 0.75rem;
+      min-height: 1.2em;
+    }
+    #sessionInfo .session-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 0.3rem 0.55rem;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    #sessionInfo .session-badge:hover {
+      background: #e2e8f0;
+    }
+    #sessionInfo .copy-icon {
+      color: #94a3b8;
+      flex-shrink: 0;
+      transition: color 0.15s ease;
+    }
+    #sessionInfo .session-badge:hover .copy-icon {
+      color: #475569;
+    }
+    #transcript {
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 1rem;
+      height: 400px;
+      overflow-y: auto;
+      font-size: 0.875rem;
+      line-height: 1.7;
+      background: #fafbfc;
+      scroll-behavior: smooth;
+      display: flex;
+      flex-direction: column;
+    }
+    #transcript.disabled {
+      background: #f1f5f9;
+      opacity: 0.5;
+    }
+    .msg {
+      margin-bottom: 0.75rem;
+      padding: 0.6rem 0.9rem;
+      border-radius: 12px;
+      max-width: 85%;
+      animation: fadeIn 0.3s ease;
+    }
+    .msg-user {
+      background: #f1f5f9;
+      color: #1e293b;
+      margin-left: auto;
+      text-align: right;
+      border-bottom-right-radius: 4px;
+    }
+    .msg-user::before {
+      content: "You: ";
+      font-weight: 700;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: #64748b;
+    }
+    .msg-agent {
+      background: #eff6ff;
+      color: #1e3a5f;
+      margin-right: auto;
+      border-bottom-left-radius: 4px;
+    }
+    .msg-agent::before {
+      content: "Agent: ";
+      font-weight: 700;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: #3b82f6;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <h1>Voice Agent</h1>
+
+  <div class="card">
+    <div class="controls">
+      <button id="muteBtn" onclick="toggleMute()" disabled>
+        <svg id="micOn" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="8" y1="23" x2="16" y2="23"/>
+        </svg>
+        <svg id="micOff" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+          <line x1="1" y1="1" x2="23" y2="23"/>
+          <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/>
+          <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.49-.35 2.17"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="8" y1="23" x2="16" y2="23"/>
+        </svg>
+        <span id="muteBtnText">Mute</span>
+      </button>
+      <div class="controls-row">
+        <button id="connectBtn" onclick="connect()">Connect</button>
+        <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+      </div>
+    </div>
+
+    <div id="status">Not connected</div>
+    <div id="sessionInfo"></div>
+    <div id="transcript"></div>
+  </div>
+
+  <script>
+    // --- State ---
+    let ws = null;
+    let audioContext = null;
+    let workletNode = null;
+    let mediaStream = null;
+    let player = null;
+    let currentAgentTranscript = "";
+    let sessionId = null;
+    let isMuted = false;
+
+    // --- DOM refs ---
+    const statusEl = document.getElementById("status");
+    const transcriptEl = document.getElementById("transcript");
+    const connectBtn = document.getElementById("connectBtn");
+    const disconnectBtn = document.getElementById("disconnectBtn");
+    const muteBtn = document.getElementById("muteBtn");
+
+    // --- Audio Player ---
+    class AudioPlayer {
+      constructor(sampleRate = 24000) {
+        this.sampleRate = sampleRate;
+        this.context = new AudioContext({ sampleRate });
+        this.nextStartTime = 0;
+      }
+
+      play(float32Data) {
+        const buffer = this.context.createBuffer(1, float32Data.length, this.sampleRate);
+        buffer.copyToChannel(float32Data, 0);
+        const source = this.context.createBufferSource();
+        source.buffer = buffer;
+        source.connect(this.context.destination);
+        const now = this.context.currentTime;
+        const startTime = Math.max(now, this.nextStartTime);
+        source.start(startTime);
+        this.nextStartTime = startTime + buffer.duration;
+      }
+
+      interrupt() {
+        this.context.close();
+        this.context = new AudioContext({ sampleRate: this.sampleRate });
+        this.nextStartTime = 0;
+      }
+
+      close() {
+        this.context.close();
+      }
+    }
+
+    // --- Base64 helpers ---
+    function base64ToInt16Array(b64) {
+      const binary = atob(b64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return new Int16Array(bytes.buffer);
+    }
+
+    function int16ToFloat32(int16) {
+      const f32 = new Float32Array(int16.length);
+      for (let i = 0; i < int16.length; i++) f32[i] = int16[i] / 32768.0;
+      return f32;
+    }
+
+    // --- Transcript helpers ---
+    function addTranscript(role, text) {
+      const div = document.createElement("div");
+      div.className = `msg msg-${role}`;
+      div.textContent = text;
+      transcriptEl.appendChild(div);
+      transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    }
+
+    // --- Copy Session ID ---
+    function copySessionId(badge, id) {
+      navigator.clipboard.writeText(id);
+      const copyIcon = badge.querySelector(".copy-icon");
+      const checkIcon = badge.querySelector(".check-icon");
+      copyIcon.style.display = "none";
+      checkIcon.style.display = "";
+      setTimeout(() => {
+        copyIcon.style.display = "";
+        checkIcon.style.display = "none";
+      }, 600);
+    }
+
+    // --- Mute ---
+    function toggleMute() {
+      isMuted = !isMuted;
+      document.getElementById("muteBtnText").textContent = isMuted ? "Unmute" : "Mute";
+      document.getElementById("micOn").style.display = isMuted ? "none" : "";
+      document.getElementById("micOff").style.display = isMuted ? "" : "none";
+      muteBtn.classList.toggle("muted", isMuted);
+      if (mediaStream) {
+        mediaStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
+      }
+    }
+
+    // --- Connect ---
+    async function connect() {
+      try {
+        transcriptEl.innerHTML = "";
+        transcriptEl.classList.remove("disabled");
+        setStatus("Requesting microphone...");
+
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: 24000,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+
+        audioContext = new AudioContext({ sampleRate: 24000 });
+        await audioContext.audioWorklet.addModule("audio-processor.js");
+
+        const source = audioContext.createMediaStreamSource(mediaStream);
+        workletNode = new AudioWorkletNode(audioContext, "audio-capture-processor");
+        source.connect(workletNode);
+
+        // WebSocket
+        sessionId = crypto.randomUUID();
+        const proto = location.protocol === "https:" ? "wss:" : "ws:";
+        ws = new WebSocket(`${proto}//${location.host}/ws/${sessionId}`);
+
+        ws.onopen = () => {
+          setStatus("Connected", "connected");
+          connectBtn.disabled = true;
+          disconnectBtn.disabled = false;
+          muteBtn.disabled = false;
+          const infoEl = document.getElementById("sessionInfo");
+          infoEl.innerHTML = `<span class="session-badge" onclick="copySessionId(this, '${sessionId}')" title="Click to copy session ID"><span class="session-text">Session: ${sessionId}</span><svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><svg class="check-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:none"><polyline points="20 6 9 17 4 12"/></svg></span>`;
+        };
+
+        ws.onclose = () => {
+          setStatus("Disconnected");
+          connectBtn.disabled = false;
+          disconnectBtn.disabled = true;
+        };
+
+        ws.onerror = () => {
+          setStatus("Connection error", "error");
+        };
+
+        ws.onmessage = (e) => {
+          const msg = JSON.parse(e.data);
+          handleServerMessage(msg);
+        };
+
+        // Send audio chunks to server
+        workletNode.port.onmessage = (e) => {
+          if (!isMuted && ws && ws.readyState === WebSocket.OPEN) {
+            const pcm16 = e.data; // Int16Array
+            ws.send(JSON.stringify({ type: "audio", data: Array.from(pcm16) }));
+          }
+        };
+
+        player = new AudioPlayer(24000);
+
+      } catch (err) {
+        setStatus(`Error: ${err.message}`, "error");
+        console.error(err);
+      }
+    }
+
+    // --- Disconnect ---
+    function disconnect() {
+      if (ws) { ws.close(); ws = null; }
+      if (workletNode) { workletNode.disconnect(); workletNode = null; }
+      if (audioContext) { audioContext.close(); audioContext = null; }
+      if (mediaStream) { mediaStream.getTracks().forEach((t) => t.stop()); mediaStream = null; }
+      if (player) { player.close(); player = null; }
+      currentAgentTranscript = "";
+      sessionId = null;
+      document.getElementById("sessionInfo").innerHTML = "";
+      isMuted = false;
+      document.getElementById("muteBtnText").textContent = "Mute";
+      document.getElementById("micOn").style.display = "";
+      document.getElementById("micOff").style.display = "none";
+      muteBtn.classList.remove("muted");
+      muteBtn.disabled = true;
+      transcriptEl.classList.add("disabled");
+      setStatus("Disconnected");
+      connectBtn.disabled = false;
+      disconnectBtn.disabled = true;
+    }
+
+    // --- Handle server messages ---
+    // Event type strings must match RealtimeEventType enum in src/app/realtime_event_types.py
+    function handleServerMessage(msg) {
+      switch (msg.type) {
+        case "response.output_audio.delta":
+          if (player && msg.delta) {
+            const pcm16 = base64ToInt16Array(msg.delta);
+            const float32 = int16ToFloat32(pcm16);
+            player.play(float32);
+          }
+          break;
+
+        case "response.output_audio.done":
+          // Audio stream complete for this response
+          break;
+
+        case "input_audio_buffer.speech_started":
+          // User is speaking — interrupt agent playback
+          if (player) player.interrupt();
+          if (currentAgentTranscript) {
+            addTranscript("agent", currentAgentTranscript);
+            currentAgentTranscript = "";
+          }
+          break;
+
+        case "response.output_audio_transcript.delta":
+          currentAgentTranscript += msg.delta || "";
+          break;
+
+        case "response.output_audio_transcript.done":
+          currentAgentTranscript = msg.transcript || currentAgentTranscript;
+          break;
+
+        case "response.done":
+          if (currentAgentTranscript) {
+            addTranscript("agent", currentAgentTranscript);
+            currentAgentTranscript = "";
+          }
+          break;
+
+        case "conversation.item.input_audio_transcription.completed":
+          if (msg.transcript) addTranscript("user", msg.transcript);
+          break;
+
+        case "error":
+          setStatus(`Error: ${msg.error}`, "error");
+          break;
+      }
+    }
+
+    // --- Status ---
+    function setStatus(text, cls) {
+      statusEl.textContent = text;
+      statusEl.className = cls || "";
+    }
+  </script>
+</body>
+</html>
