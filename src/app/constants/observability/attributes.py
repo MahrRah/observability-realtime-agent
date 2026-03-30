@@ -1,0 +1,61 @@
+from enum import StrEnum
+
+
+class Attributes(StrEnum):
+    """Span/event attribute key constants."""
+
+    SESSION_ID = "gen_ai.session.id"
+    SESSION_OUTCOME = "gen_ai.session.outcome"
+    EVENT_NAME = "gen_ai.event.name"
+    ITEM_ID = "gen_ai.item.id"
+    ITEM_AUDIO_END_MS = "gen_ai.item.audio_end_ms"
+    RESPONSE_ID = "gen_ai.response.id"
+    OUTPUT_TYPE = "gen_ai.output.type"
+    FUNCTION_CALL_ID = "gen_ai.function_call.id"
+    FUNCTION_NAME = "gen_ai.function.name"
+    REQUEST_MODEL = "gen_ai.request.model"
+    INSTRUCTIONS = "gen_ai.instructions"
+    SESSION_EXPIRES_AT = "gen_ai.session.expires_at"
+    SESSION_OBJECT = "gen_ai.session.object"
+    SESSION_TYPE = "gen_ai.session.type"
+    REQUEST_MAX_TOKENS = "gen_ai.request.max_tokens"
+    TOOL_CHOICE = "gen_ai.tool_choice"
+    AUDIO_INPUT_FORMAT = "gen_ai.audio.input.format"
+    AUDIO_INPUT_RATE = "gen_ai.audio.input.rate"
+    AUDIO_INPUT_TRANSCRIPTION_MODEL = "gen_ai.audio.input.transcription.model"
+    AUDIO_INPUT_TRANSCRIPTION_LANGUAGE = "gen_ai.audio.input.transcription.language"
+    AUDIO_INPUT_TRANSCRIPTION_PROMPT = "gen_ai.audio.input.transcription.prompt"
+    AUDIO_INPUT_NOISE_REDUCTION = "gen_ai.audio.input.noise_reduction"
+    TURN_DETECTION_TYPE = "gen_ai.turn_detection.type"
+    TURN_DETECTION_CREATE_RESPONSE = "gen_ai.turn_detection.create_response"
+    TURN_DETECTION_INTERRUPT_RESPONSE = "gen_ai.turn_detection.interrupt_response"
+    TURN_DETECTION_THRESHOLD = "gen_ai.turn_detection.threshold"
+    TURN_DETECTION_PREFIX_PADDING_MS = "gen_ai.turn_detection.prefix_padding_ms"
+    TURN_DETECTION_SILENCE_DURATION_MS = "gen_ai.turn_detection.silence_duration_ms"
+    AUDIO_OUTPUT_FORMAT = "gen_ai.audio.output.format"
+    AUDIO_OUTPUT_RATE = "gen_ai.audio.output.rate"
+    AUDIO_OUTPUT_VOICE = "gen_ai.audio.output.voice"
+    AUDIO_OUTPUT_SPEED = "gen_ai.audio.output.speed"
+    TOKEN_TOTAL = "gen_ai.usage.total_tokens"
+    TOKEN_INPUT_AUDIO = "gen_ai.usage.input_audio_tokens"
+    TOKEN_INPUT_TEXT = "gen_ai.usage.input_text_tokens"
+    TOKEN_INPUT_AUDIO_CACHED = "gen_ai.usage.input_audio_cached_tokens"
+    TOKEN_INPUT_TEXT_CACHED = "gen_ai.usage.input_text_cached_tokens"
+    TOKEN_OUTPUT_AUDIO = "gen_ai.usage.output_audio_tokens"
+    TOKEN_OUTPUT_TEXT = "gen_ai.usage.output_text_tokens"
+
+    # Response status
+    RESPONSE_STATUS = "gen_ai.response.status"
+    RESPONSE_STATUS_REASON = "gen_ai.response.status_reason"
+    RESPONSE_FINISH_REASONS = "gen_ai.response.finish_reasons"
+
+    # Error
+    ERROR_TYPE = "error.type"
+    ERROR_CODE = "error.code"
+    ERROR_MESSAGE = "error.message"
+
+    # Rate limits
+    RATE_LIMIT_NAME = "rate_limit.name"
+    RATE_LIMIT_LIMIT = "rate_limit.limit"
+    RATE_LIMIT_REMAINING = "rate_limit.remaining"
+    RATE_LIMIT_RESET_SECONDS = "rate_limit.reset_seconds"
