@@ -30,14 +30,14 @@ from openai.types.realtime import (
 )
 from openai.types.realtime.realtime_audio_formats import AudioPCM
 from openai.types.realtime.realtime_audio_input_turn_detection import ServerVad
-from opentelemetry import metrics, trace
 from opentelemetry.trace import SpanKind, StatusCode, get_current_span
 
-from app.constants.observability.attributes import Attributes
-from app.constants.observability.metric import MetricName
-from app.constants.observability.span import SpanName
-from app.constants.realtime_event_types import RealtimeEventType
-from app.listener.telemetry_context import TelemetryContext
+from opentelemetry import metrics, trace
+from opentelemetry.instrumentation.openai_agents_realtime._constants.attributes import Attributes
+from opentelemetry.instrumentation.openai_agents_realtime._constants.metric import MetricName
+from opentelemetry.instrumentation.openai_agents_realtime._constants.realtime_event_types import RealtimeEventType
+from opentelemetry.instrumentation.openai_agents_realtime._constants.span import SpanName
+from opentelemetry.instrumentation.openai_agents_realtime._telemetry_context import TelemetryContext
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -156,19 +156,19 @@ class RealtimeTelemetryListener(RealtimeModelListener):
     def _handle_speech_started(self, event: InputAudioBufferSpeechStartedEvent) -> None:
         ctx = self._otel.get_span_context(key="session")
         span = tracer.start_span(SpanName.USER_INPUT, context=ctx, kind=SpanKind.INTERNAL)
-        item_id = event.item_id or UNKNOWN_ID
+        item_id = event.item_id
 
         self._otel.start_anchor_span(item_id, span, context=ctx)
 
         if self._otel.session_id:
             span.set_attribute(Attributes.SESSION_ID, self._otel.session_id)
         span.set_attribute(Attributes.EVENT_NAME, RealtimeEventType.USER_INPUT)
-        span.set_attribute(Attributes.ITEM_ID, event.item_id or UNKNOWN_ID)
+        span.set_attribute(Attributes.ITEM_ID, event.item_id)
         span.set_attribute(Attributes.RESPONSE_ID, event.response_id or UNKNOWN_ID)
         span.set_attribute(Attributes.PROVIDER_NAME, "openai")
 
     def _handle_speech_stopped(self, event: InputAudioBufferSpeechStoppedEvent) -> None:
-        self._otel.end_anchor_span(event.item_id )
+        self._otel.end_anchor_span(event.item_id)
 
     def _handle_response_created(self, event: ResponseCreatedEvent) -> None:
         ctx = self._otel.get_span_context(key="session")

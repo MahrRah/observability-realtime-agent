@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "opentelemetry-instrumentation-openai-agents-realtime"
+dynamic = ["version"]
+description = "OpenTelemetry instrumentation for OpenAI Agents SDK Realtime (Voice) API"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "opentelemetry-api ~= 1.12",
+    "opentelemetry-instrumentation ~= 0.40b0",
+    "opentelemetry-semantic-conventions ~= 0.50b0",
+]
+
+[project.optional-dependencies]
+instruments = [
+    "openai-agents[voice] >= 0.13.4",
+]
+
+[project.entry-points.opentelemetry_instrumentor]
+openai_agents_realtime = "opentelemetry.instrumentation.openai_agents_realtime:OpenAIAgentsRealtimeInstrumentor"
+
+[project.urls]
+Homepage = "https://github.com/azure-samples/observability-realtime-agent"
+
+[tool.hatch.version]
+path = "src/opentelemetry/instrumentation/openai_agents_realtime/version.py"
+
+[tool.hatch.build.targets.sdist]
+include = ["/src"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/opentelemetry"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "SIM",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

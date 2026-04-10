@@ -10,8 +10,7 @@ from agents.realtime.model import RealtimeModelListener
 from agents.realtime.model_events import RealtimeModelEvent
 from agents.realtime.openai_realtime import get_server_event_type_adapter
 from fastapi import WebSocket
-
-from app.constants.realtime_event_types import RealtimeEventType
+from opentelemetry.instrumentation.openai_agents_realtime import RealtimeEventType
 
 logger = logging.getLogger(__name__)
 

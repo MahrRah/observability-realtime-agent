@@ -15,6 +15,7 @@ dependencies = [
     "uvicorn[standard]>=0.30.0",
     "websockets>=13.0",
     "openai-agents[voice]>=0.13.4",
+    "opentelemetry-instrumentation-openai-agents-realtime",
     "pydantic-settings>=2.0.0",
     "azure-identity>=1.17.0",
     "azure-monitor-opentelemetry>=1.8.7",
@@ -45,3 +46,6 @@ select = [
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.uv.sources]
+opentelemetry-instrumentation-openai-agents-realtime = { path = "packages/opentelemetry-instrumentation-openai-agents-realtime", editable = true }

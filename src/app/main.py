@@ -13,10 +13,11 @@ from azure.monitor.opentelemetry import configure_azure_monitor
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from opentelemetry import trace
+from opentelemetry.instrumentation.openai_agents_realtime import OpenAIAgentsRealtimeInstrumentor
 
 from app.agent import create_agent
 from app.config import AppSettings, ServerSettings
-from app.listener import RealtimeTelemetryListener, WebSocketEventHandler
+from app.listener import WebSocketEventHandler
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -31,6 +32,8 @@ logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(l
 logging.getLogger("azure.monitor.opentelemetry.exporter.export._base").setLevel(logging.WARNING)
 
 configure_azure_monitor()
+
+OpenAIAgentsRealtimeInstrumentor().instrument()
 
 TOKEN_SCOPE = "https://cognitiveservices.azure.com/.default"
 
@@ -78,10 +81,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
     session = await runner.run(model_config=model_config)
     async with session:
         logger.info("Session %s starting", session_id)
-        listeners = [WebSocketEventHandler(websocket, session_id), RealtimeTelemetryListener(session_id)]
-
-        for listener in listeners:
-            session.model.add_listener(listener)
+        ws_handler = WebSocketEventHandler(websocket, session_id)
+        session.model.add_listener(ws_handler)
 
         try:
             while True:
@@ -93,10 +94,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
                     await session.send_audio(audio_bytes)
         except WebSocketDisconnect:
             logger.info("Session %s: browser disconnected", session_id)
-        finally:
-            for listener in listeners:
-                if hasattr(listener, "cleanup"):
-                    listener.cleanup()
     logger.info("Session %s: session closed", session_id)
 
 

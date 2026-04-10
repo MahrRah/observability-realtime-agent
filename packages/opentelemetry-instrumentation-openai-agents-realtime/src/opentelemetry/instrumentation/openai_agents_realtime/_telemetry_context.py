@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 from contextvars import Token
 
@@ -31,10 +32,8 @@ class TelemetryContext:
         if context is None:
             token = attach(new_context)
         else:
-            try:
+            with contextlib.suppress(Exception):
                 attach(new_context)
-            except Exception:
-                pass
         self._anchors[key] = (span, token)
         return span
 
@@ -43,10 +42,8 @@ class TelemetryContext:
         if anchor:
             span, _ = anchor
             if attach_to_current_context:
-                try:
+                with contextlib.suppress(Exception):
                     attach(set_span_in_context(span))
-                except Exception:
-                    pass
             return span
         return None
 
@@ -73,10 +70,8 @@ class TelemetryContext:
             if anchor:
                 span, token = anchor
                 if token is not None:
-                    try:
+                    with contextlib.suppress(Exception):
                         detach(token)
-                    except Exception:
-                        pass
                 try:
                     if span.is_recording():
                         span.end()
