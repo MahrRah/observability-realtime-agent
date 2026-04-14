@@ -9,12 +9,18 @@ from agents.realtime.model import RealtimeModelListener
 from agents.realtime.model_events import RealtimeModelEvent
 from agents.realtime.openai_realtime import get_server_event_type_adapter
 from openai.types.realtime import (
+    ConversationCreatedEvent,
     ConversationItemAdded,
     ConversationItemInputAudioTranscriptionCompletedEvent,
     ConversationItemInputAudioTranscriptionFailedEvent,
     ConversationItemTruncatedEvent,
+    InputAudioBufferCommittedEvent,
     InputAudioBufferSpeechStartedEvent,
     InputAudioBufferSpeechStoppedEvent,
+    InputAudioBufferTimeoutTriggered,
+    McpListToolsCompleted,
+    McpListToolsFailed,
+    McpListToolsInProgress,
     RateLimitsUpdatedEvent,
     RealtimeConversationItemFunctionCallOutput,
     RealtimeErrorEvent,
@@ -26,6 +32,12 @@ from openai.types.realtime import (
     ResponseCreatedEvent,
     ResponseDoneEvent,
     ResponseFunctionCallArgumentsDoneEvent,
+    ResponseMcpCallArgumentsDone,
+    ResponseMcpCallCompleted,
+    ResponseMcpCallFailed,
+    ResponseMcpCallInProgress,
+    ResponseTextDeltaEvent,
+    ResponseTextDoneEvent,
     SessionCreatedEvent,
     SessionUpdatedEvent,
 )
@@ -60,6 +72,11 @@ _operation_duration_histogram = meter.create_histogram(
     description="GenAI operation duration",
     unit="s",
 )
+_time_to_first_token = meter.create_histogram(
+    MetricName.TIME_TO_FIRST_TOKEN,
+    description="Time to generate first token for successful responses",
+    unit="s",
+)
 _function_call_counter = meter.create_counter(MetricName.FUNCTION_CALL)
 _function_success_counter = meter.create_counter(MetricName.FUNCTION_SUCCESS)
 _error_counter = meter.create_counter(MetricName.ERROR, description="Error events by type")
@@ -78,17 +95,23 @@ class RealtimeTelemetryListener(RealtimeModelListener):
         *,
         track_delta_events: bool = False,
         track_tool_content: bool = False,
+        server_address: str | None = None,
+        server_port: int | None = None,
+        agent_name: str | None = None,
     ) -> None:
         self.session_id = session_id
         self.track_delta_events = track_delta_events
         self.track_tool_content = track_tool_content
-
+        self._server_address = server_address
+        self._server_port = server_port
+        self.agent_name = agent_name or "realtime_agent"
         self._otel = TelemetryContext(session_id=session_id, root_span=get_current_span())
 
         self._function_call_map: dict[str, str] = {}
         self._conversation_id: str | None = None
         self._model: str | None = None
         self._response_start_times: dict[str, float] = {}
+        self._first_token_recorded: set[str] = set()
 
     def cleanup(self) -> None:
         """End all open spans and record a session-outcome metric."""
@@ -107,6 +130,8 @@ class RealtimeTelemetryListener(RealtimeModelListener):
                 self._handle_session_created(parsed)
             case RealtimeEventType.SESSION_UPDATED:
                 self._handle_session_updated(parsed)
+            case RealtimeEventType.CONVERSATION_CREATED:
+                self._handle_conversation_created(parsed)
             case RealtimeEventType.SPEECH_STARTED:
                 self._handle_speech_started(parsed)
             case RealtimeEventType.SPEECH_STOPPED:
@@ -125,12 +150,34 @@ class RealtimeTelemetryListener(RealtimeModelListener):
                 self._handle_response_transcription_delta(parsed)
             case RealtimeEventType.TRANSCRIPT_DONE:
                 self._handle_response_audio_transcript_done(parsed)
+            case RealtimeEventType.TEXT_DELTA:
+                self._handle_response_text_delta(parsed)
+            case RealtimeEventType.TEXT_DONE:
+                self._handle_response_text_done(parsed)
             case RealtimeEventType.INPUT_TRANSCRIPTION_COMPLETED:
                 self._handle_input_audio_transcription_completed(parsed)
             case RealtimeEventType.INPUT_TRANSCRIPTION_FAILED:
                 self._handle_input_audio_transcription_failed(parsed)
             case RealtimeEventType.CONVERSATION_ITEM_TRUNCATED:
                 self._handle_conversation_item_truncated(parsed)
+            case RealtimeEventType.INPUT_AUDIO_BUFFER_COMMITTED:
+                self._handle_input_audio_buffer_committed(parsed)
+            case RealtimeEventType.INPUT_AUDIO_BUFFER_TIMEOUT_TRIGGERED:
+                self._handle_input_audio_buffer_timeout_triggered(parsed)
+            case RealtimeEventType.MCP_CALL_ARGUMENTS_DONE:
+                self._handle_mcp_call_arguments_done(parsed)
+            case RealtimeEventType.MCP_CALL_IN_PROGRESS:
+                self._handle_mcp_call_in_progress(parsed)
+            case RealtimeEventType.MCP_CALL_COMPLETED:
+                self._handle_mcp_call_completed(parsed)
+            case RealtimeEventType.MCP_CALL_FAILED:
+                self._handle_mcp_call_failed(parsed)
+            case RealtimeEventType.MCP_LIST_TOOLS_IN_PROGRESS:
+                self._handle_mcp_list_tools(parsed)
+            case RealtimeEventType.MCP_LIST_TOOLS_COMPLETED:
+                self._handle_mcp_list_tools(parsed)
+            case RealtimeEventType.MCP_LIST_TOOLS_FAILED:
+                self._handle_mcp_list_tools(parsed)
             case RealtimeEventType.ERROR:
                 self._handle_error(parsed)
             case RealtimeEventType.RATE_LIMITS_UPDATED:
@@ -157,8 +204,14 @@ class RealtimeTelemetryListener(RealtimeModelListener):
                     self._otel.root_span.set_attribute(Attributes.SESSION_ID, oai_session_id)
 
         span.set_attribute(Attributes.EVENT_NAME, RealtimeEventType.SESSION_CREATED)
-        span.set_attribute(Attributes.OPERATION_NAME, "realtime_session")
+        span.set_attribute(Attributes.OPERATION_NAME, "invoke_agent")
         span.set_attribute(Attributes.PROVIDER_NAME, "openai")
+        span.set_attribute(Attributes.OPENAI_API_TYPE, "realtime")
+        span.set_attribute(Attributes.AGENT_NAME, self.agent_name)
+        if self._server_address:
+            span.set_attribute(Attributes.SERVER_ADDRESS, self._server_address)
+        if self._server_port is not None:
+            span.set_attribute(Attributes.SERVER_PORT, self._server_port)
 
     def _handle_session_updated(self, event: SessionUpdatedEvent) -> None:
         span = self._otel.get_anchor_span("session")
@@ -166,6 +219,14 @@ class RealtimeTelemetryListener(RealtimeModelListener):
             span.set_attributes(_extract_session_attributes(event.session))
             if event.session.model is not None:
                 self._model = event.session.model
+
+    def _handle_conversation_created(self, event: ConversationCreatedEvent) -> None:
+        conversation = getattr(event, "conversation", None)
+        if conversation and hasattr(conversation, "id") and conversation.id:
+            self._conversation_id = conversation.id
+            span = self._otel.get_anchor_span("session")
+            if span:
+                span.set_attribute(Attributes.CONVERSATION_ID, self._conversation_id)
 
     def _handle_speech_started(self, event: InputAudioBufferSpeechStartedEvent) -> None:
         ctx = self._otel.get_span_context(key="session")
@@ -176,17 +237,17 @@ class RealtimeTelemetryListener(RealtimeModelListener):
 
         if self._otel.session_id:
             span.set_attribute(Attributes.SESSION_ID, self._otel.session_id)
-        span.set_attribute(Attributes.EVENT_NAME, RealtimeEventType.USER_INPUT)
+        span.set_attribute(Attributes.EVENT_NAME, RealtimeEventType.SPEECH_STARTED)
         span.set_attribute(Attributes.ITEM_ID, event.item_id)
-        span.set_attribute(Attributes.RESPONSE_ID, event.response_id or UNKNOWN_ID)
         span.set_attribute(Attributes.PROVIDER_NAME, "openai")
+        span.set_attribute(Attributes.OPERATION_NAME, SpanName.USER_INPUT)
 
     def _handle_speech_stopped(self, event: InputAudioBufferSpeechStoppedEvent) -> None:
         self._otel.end_anchor_span(event.item_id)
 
     def _handle_response_created(self, event: ResponseCreatedEvent) -> None:
         ctx = self._otel.get_span_context(key="session")
-        span = tracer.start_span(SpanName.ASSISTANT_RESPONSE, context=ctx, kind=SpanKind.INTERNAL)
+        span = tracer.start_span(SpanName.AGENT_RESPONSE, context=ctx, kind=SpanKind.INTERNAL)
         response_id = event.response.id or UNKNOWN_ID
         self._otel.start_anchor_span(response_id, span, context=ctx)
 
@@ -195,6 +256,7 @@ class RealtimeTelemetryListener(RealtimeModelListener):
         span.set_attribute(Attributes.EVENT_NAME, RealtimeEventType.RESPONSE_CREATED)
         span.set_attribute(Attributes.RESPONSE_ID, response_id)
         span.set_attribute(Attributes.PROVIDER_NAME, "openai")
+        span.set_attribute(Attributes.OPERATION_NAME, SpanName.AGENT_RESPONSE)
 
         conversation_id = getattr(event.response, "conversation_id", None)
         if conversation_id:
@@ -245,7 +307,7 @@ class RealtimeTelemetryListener(RealtimeModelListener):
 
             attrs: dict[str, Any] = {}
             if event.response.output_modalities:
-                attrs[Attributes.OUTPUT_TYPE] = event.response.output_modalities
+                attrs[Attributes.OUTPUT_TYPE] = [_map_output_modality(m) for m in event.response.output_modalities]
 
             model = getattr(event.response, "model", None)
             if model:
@@ -263,6 +325,7 @@ class RealtimeTelemetryListener(RealtimeModelListener):
 
         # Record operation duration metric
         start_time = self._response_start_times.pop(response_id, None)
+        self._first_token_recorded.discard(response_id)
         if start_time is not None:
             duration = time.monotonic() - start_time
             error_type = getattr(event.response, "status", None)
@@ -325,24 +388,40 @@ class RealtimeTelemetryListener(RealtimeModelListener):
     # ── Delta / transcript events ─────────────────────────────────────
 
     def _handle_response_transcription_delta(self, event: ResponseAudioTranscriptDeltaEvent) -> None:
+        self._maybe_record_ttft(event.response_id)
         if not self.track_delta_events:
             return
         span = self._otel.get_anchor_span(event.response_id)
         if span:
             span.add_event(
-                RealtimeEventType.RESPONSE_AUDIO_TRANSCRIPT_DELTA,
-                attributes={Attributes.EVENT_NAME: RealtimeEventType.RESPONSE_AUDIO_DELTA},
+                RealtimeEventType.TRANSCRIPT_DELTA,
+                attributes={Attributes.EVENT_NAME: RealtimeEventType.TRANSCRIPT_DELTA},
             )
 
     def _handle_response_audio_delta(self, event: ResponseAudioDeltaEvent) -> None:
+        self._maybe_record_ttft(event.response_id)
         if not self.track_delta_events:
             return
         span = self._otel.get_anchor_span(event.response_id)
         if span:
             span.add_event(
-                RealtimeEventType.RESPONSE_AUDIO_DELTA,
-                attributes={Attributes.EVENT_NAME: RealtimeEventType.RESPONSE_AUDIO_DELTA},
+                RealtimeEventType.AUDIO_DELTA,
+                attributes={Attributes.EVENT_NAME: RealtimeEventType.AUDIO_DELTA},
             )
+
+    def _handle_response_text_delta(self, event: ResponseTextDeltaEvent) -> None:
+        self._maybe_record_ttft(event.response_id)
+        if not self.track_delta_events:
+            return
+        span = self._otel.get_anchor_span(event.response_id)
+        if span:
+            span.add_event(
+                RealtimeEventType.TEXT_DELTA,
+                attributes={Attributes.EVENT_NAME: RealtimeEventType.TEXT_DELTA},
+            )
+
+    def _handle_response_text_done(self, event: ResponseTextDoneEvent) -> None:
+        logger.info("Assistant (text): %s", event.text)
 
     def _handle_input_audio_transcription_completed(
         self,
@@ -362,6 +441,74 @@ class RealtimeTelemetryListener(RealtimeModelListener):
                     Attributes.ITEM_ID: event.item_id,
                     Attributes.ITEM_AUDIO_END_MS: event.audio_end_ms,
                 },
+            )
+
+    # ── Audio buffer events ───────────────────────────────────────────
+
+    def _handle_input_audio_buffer_committed(self, event: InputAudioBufferCommittedEvent) -> None:
+        span = self._otel.get_anchor_span("session")
+        if span:
+            span.add_event(
+                RealtimeEventType.INPUT_AUDIO_BUFFER_COMMITTED,
+                attributes={Attributes.ITEM_ID: event.item_id},
+            )
+
+    def _handle_input_audio_buffer_timeout_triggered(self, event: InputAudioBufferTimeoutTriggered) -> None:
+        span = self._otel.get_anchor_span("session")
+        if span:
+            span.add_event(
+                RealtimeEventType.INPUT_AUDIO_BUFFER_TIMEOUT_TRIGGERED,
+                attributes={Attributes.ITEM_ID: event.item_id},
+            )
+
+    # ── MCP tool call events ──────────────────────────────────────────
+
+    def _handle_mcp_call_arguments_done(self, event: ResponseMcpCallArgumentsDone) -> None:
+        ctx = self._otel.get_span_context(key=event.response_id)
+        span = tracer.start_span(f"{SpanName.FUNCTION_CALL} mcp_tool", context=ctx, kind=SpanKind.INTERNAL)
+        self._otel.start_anchor_span(event.item_id, span, context=ctx)
+
+        if self._otel.session_id:
+            span.set_attribute(Attributes.SESSION_ID, self._otel.session_id)
+        span.set_attribute(Attributes.EVENT_NAME, RealtimeEventType.MCP_CALL_ARGUMENTS_DONE)
+        span.set_attribute(Attributes.RESPONSE_ID, event.response_id)
+        span.set_attribute(Attributes.ITEM_ID, event.item_id)
+        span.set_attribute(Attributes.TOOL_TYPE, "mcp")
+        span.set_attribute(Attributes.OPERATION_NAME, "execute_tool")
+        span.set_attribute(Attributes.PROVIDER_NAME, "openai")
+        if self._conversation_id:
+            span.set_attribute(Attributes.CONVERSATION_ID, self._conversation_id)
+        if self.track_tool_content:
+            span.set_attribute(Attributes.TOOL_CALL_ARGUMENTS, event.arguments)
+
+    def _handle_mcp_call_in_progress(self, event: ResponseMcpCallInProgress) -> None:
+        span = self._otel.get_anchor_span(event.item_id)
+        if span:
+            span.add_event(RealtimeEventType.MCP_CALL_IN_PROGRESS)
+
+    def _handle_mcp_call_completed(self, event: ResponseMcpCallCompleted) -> None:
+        self._otel.end_anchor_span(event.item_id)
+
+    def _handle_mcp_call_failed(self, event: ResponseMcpCallFailed) -> None:
+        span = self._otel.get_anchor_span(event.item_id)
+        if span:
+            span.set_status(StatusCode.ERROR, "MCP call failed")
+            span.set_attribute(Attributes.ERROR_TYPE, "mcp_call_failed")
+        self._otel.end_anchor_span(event.item_id)
+        _error_counter.add(
+            1,
+            {"session_id": self._otel.session_id, "error_type": "mcp_call_failed"},
+        )
+
+    def _handle_mcp_list_tools(
+        self,
+        event: McpListToolsInProgress | McpListToolsCompleted | McpListToolsFailed,
+    ) -> None:
+        span = self._otel.get_anchor_span("session")
+        if span:
+            span.add_event(
+                event.type,
+                attributes={Attributes.ITEM_ID: event.item_id},
             )
 
     def _handle_error(self, event: RealtimeErrorEvent) -> None:
@@ -482,8 +629,32 @@ class RealtimeTelemetryListener(RealtimeModelListener):
                 {**base_attrs, Attributes.TOKEN_TYPE: "output"},
             )
 
+    def _maybe_record_ttft(self, response_id: str) -> None:
+        """Record time-to-first-token once per response on the first content delta."""
+        if response_id in self._first_token_recorded:
+            return
+        start_time = self._response_start_times.get(response_id)
+        if start_time is None:
+            return
+        self._first_token_recorded.add(response_id)
+        ttft = time.monotonic() - start_time
+        ttft_attrs: dict[str, str] = {
+            Attributes.OPERATION_NAME: "realtime_session",
+            Attributes.PROVIDER_NAME: "openai",
+        }
+        if self._model:
+            ttft_attrs[Attributes.REQUEST_MODEL] = self._model
+        _time_to_first_token.record(ttft, ttft_attrs)
+
 
 # ─── Helper utilities ─────────────────────────────────────────────────
+
+_OUTPUT_MODALITY_MAP = {"audio": "speech"}
+
+
+def _map_output_modality(modality: str) -> str:
+    """Map raw modality values to semconv well-known ``gen_ai.output.type`` values."""
+    return _OUTPUT_MODALITY_MAP.get(modality, modality)
 
 
 def _extract_token_attributes(usage: RealtimeResponseUsage) -> dict[str, int]:

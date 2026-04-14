@@ -51,6 +51,7 @@ class Attributes(StrEnum):
     TOKEN_OUTPUT_TEXT = "gen_ai.usage.output_text_tokens"
     USAGE_INPUT_TOKENS = "gen_ai.usage.input_tokens"
     USAGE_OUTPUT_TOKENS = "gen_ai.usage.output_tokens"
+    AGENT_NAME = "gen_ai.agent.name"
 
     # Response status
     RESPONSE_STATUS = "gen_ai.response.status"
@@ -65,6 +66,11 @@ class Attributes(StrEnum):
 
     # Metric attributes
     TOKEN_TYPE = "gen_ai.token.type"
+
+    # Server attributes
+    SERVER_ADDRESS = "server.address"
+    SERVER_PORT = "server.port"
+    OPENAI_API_TYPE = "openai.api.type"
 
     # Rate limits
     RATE_LIMIT_NAME = "rate_limit.name"
