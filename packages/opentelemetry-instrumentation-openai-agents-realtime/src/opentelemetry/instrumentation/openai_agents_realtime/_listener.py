@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import time
 from typing import Any
 
 from agents.realtime.model import RealtimeModelListener
@@ -49,7 +50,16 @@ UNKNOWN_ID = "unknown"
 # ─── Metrics ───────────────────────────────────────────
 
 
-_tokens_counter = meter.create_counter(MetricName.TOKENS, description="Token usage by category")
+_token_usage_histogram = meter.create_histogram(
+    MetricName.TOKEN_USAGE,
+    description="Number of input and output tokens used",
+    unit="{token}",
+)
+_operation_duration_histogram = meter.create_histogram(
+    MetricName.OPERATION_DURATION,
+    description="GenAI operation duration",
+    unit="s",
+)
 _function_call_counter = meter.create_counter(MetricName.FUNCTION_CALL)
 _function_success_counter = meter.create_counter(MetricName.FUNCTION_SUCCESS)
 _error_counter = meter.create_counter(MetricName.ERROR, description="Error events by type")
@@ -77,6 +87,8 @@ class RealtimeTelemetryListener(RealtimeModelListener):
 
         self._function_call_map: dict[str, str] = {}
         self._conversation_id: str | None = None
+        self._model: str | None = None
+        self._response_start_times: dict[str, float] = {}
 
     def cleanup(self) -> None:
         """End all open spans and record a session-outcome metric."""
@@ -152,6 +164,8 @@ class RealtimeTelemetryListener(RealtimeModelListener):
         span = self._otel.get_anchor_span("session")
         if span and isinstance(event.session, RealtimeSessionCreateRequest):
             span.set_attributes(_extract_session_attributes(event.session))
+            if event.session.model is not None:
+                self._model = event.session.model
 
     def _handle_speech_started(self, event: InputAudioBufferSpeechStartedEvent) -> None:
         ctx = self._otel.get_span_context(key="session")
@@ -192,6 +206,8 @@ class RealtimeTelemetryListener(RealtimeModelListener):
         elif self._conversation_id:
             span.set_attribute(Attributes.CONVERSATION_ID, self._conversation_id)
 
+        self._response_start_times[response_id] = time.monotonic()
+
     def _handle_response_done(self, event: ResponseDoneEvent) -> None:
         response_id = event.response.id or UNKNOWN_ID
         span = self._otel.get_anchor_span(response_id)
@@ -231,18 +247,34 @@ class RealtimeTelemetryListener(RealtimeModelListener):
             if event.response.output_modalities:
                 attrs[Attributes.OUTPUT_TYPE] = event.response.output_modalities
 
+            model = getattr(event.response, "model", None)
+            if model:
+                self._model = model
+                span.set_attribute(Attributes.RESPONSE_MODEL, model)
+
             if (usage := event.response.usage) is not None:
                 attrs.update(_extract_token_attributes(usage))
-                self._extract_and_record_token_usage(usage, self._otel.session_id)
+                self._extract_and_record_token_usage(usage)
 
             span.set_attributes(attrs)
 
-            model = getattr(event.response, "model", None)
-            if model:
-                span.set_attribute(Attributes.RESPONSE_MODEL, model)
-
             if self._conversation_id:
                 span.set_attribute(Attributes.CONVERSATION_ID, self._conversation_id)
+
+        # Record operation duration metric
+        start_time = self._response_start_times.pop(response_id, None)
+        if start_time is not None:
+            duration = time.monotonic() - start_time
+            error_type = getattr(event.response, "status", None)
+            duration_attrs: dict[str, str] = {
+                Attributes.OPERATION_NAME: "realtime_session",
+                Attributes.PROVIDER_NAME: "openai",
+            }
+            if self._model:
+                duration_attrs[Attributes.REQUEST_MODEL] = self._model
+            if error_type in ("failed", "incomplete"):
+                duration_attrs[Attributes.ERROR_TYPE] = error_type
+            _operation_duration_histogram.record(duration, duration_attrs)
 
         self._otel.end_anchor_span(response_id)
 
@@ -417,72 +449,41 @@ class RealtimeTelemetryListener(RealtimeModelListener):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _extract_and_record_token_usage(self, usage: RealtimeResponseUsage, session_id: str | None) -> None:
-        audio_input_tokens: int | None = None
-        text_input_tokens: int | None = None
-        audio_output_tokens: int | None = None
-        text_output_tokens: int | None = None
-        audio_input_cached_tokens: int | None = None
-        text_input_cached_tokens: int | None = None
-        total_input_cached_tokens: int | None = None
+    def _extract_and_record_token_usage(self, usage: RealtimeResponseUsage) -> None:
+        input_tokens = usage.input_tokens
+        output_tokens = usage.output_tokens
 
-        if usage.input_token_details:
-            audio_input_tokens = usage.input_token_details.audio_tokens
-            text_input_tokens = usage.input_token_details.text_tokens
+        # Fall back to computing aggregates from details when top-level fields are absent
+        if input_tokens is None and usage.input_token_details:
+            audio = usage.input_token_details.audio_tokens or 0
+            text = usage.input_token_details.text_tokens or 0
+            input_tokens = audio + text
 
-            if usage.input_token_details.cached_tokens_details:
-                cd = usage.input_token_details.cached_tokens_details
-                audio_input_cached_tokens = cd.audio_tokens
-                text_input_cached_tokens = cd.text_tokens
-                if audio_input_cached_tokens is not None and text_input_cached_tokens is not None:
-                    total_input_cached_tokens = audio_input_cached_tokens + text_input_cached_tokens
-            elif usage.input_token_details.cached_tokens is not None:
-                total_input_cached_tokens = usage.input_token_details.cached_tokens
-                text_input_cached_tokens = usage.input_token_details.cached_tokens
+        if output_tokens is None and usage.output_token_details:
+            audio = usage.output_token_details.audio_tokens or 0
+            text = usage.output_token_details.text_tokens or 0
+            output_tokens = audio + text
 
-        if usage.output_token_details:
-            audio_output_tokens = usage.output_token_details.audio_tokens
-            text_output_tokens = usage.output_token_details.text_tokens
+        base_attrs: dict[str, str] = {
+            Attributes.OPERATION_NAME: "realtime_session",
+            Attributes.PROVIDER_NAME: "openai",
+        }
+        if self._model:
+            base_attrs[Attributes.REQUEST_MODEL] = self._model
 
-        _record_token_usage(
-            audio_input_tokens=audio_input_tokens,
-            audio_input_cached_tokens=audio_input_cached_tokens,
-            audio_output_tokens=audio_output_tokens,
-            text_input_tokens=text_input_tokens,
-            text_input_cached_tokens=text_input_cached_tokens,
-            text_output_tokens=text_output_tokens,
-            total_input_cached_tokens=total_input_cached_tokens,
-            session_id=session_id,
-        )
+        if input_tokens is not None:
+            _token_usage_histogram.record(
+                input_tokens,
+                {**base_attrs, Attributes.TOKEN_TYPE: "input"},
+            )
+        if output_tokens is not None:
+            _token_usage_histogram.record(
+                output_tokens,
+                {**base_attrs, Attributes.TOKEN_TYPE: "output"},
+            )
 
 
 # ─── Helper utilities ─────────────────────────────────────────────────
-
-
-def _record_token_usage(
-    *,
-    audio_input_tokens: int | None = None,
-    audio_input_cached_tokens: int | None = None,
-    audio_output_tokens: int | None = None,
-    text_input_tokens: int | None = None,
-    text_input_cached_tokens: int | None = None,
-    text_output_tokens: int | None = None,
-    total_input_cached_tokens: int | None = None,
-    session_id: str | None = None,
-) -> None:
-    base = {"session_id": session_id}
-    pairs: list[tuple[str, int | None]] = [
-        ("audio_input", audio_input_tokens),
-        ("audio_input_cached", audio_input_cached_tokens),
-        ("audio_output", audio_output_tokens),
-        ("text_input", text_input_tokens),
-        ("text_input_cached", text_input_cached_tokens),
-        ("text_output", text_output_tokens),
-        ("total_input_cached", total_input_cached_tokens),
-    ]
-    for category, value in pairs:
-        if value is not None:
-            _tokens_counter.add(value, {**base, "token_type": category})
 
 
 def _extract_token_attributes(usage: RealtimeResponseUsage) -> dict[str, int]:

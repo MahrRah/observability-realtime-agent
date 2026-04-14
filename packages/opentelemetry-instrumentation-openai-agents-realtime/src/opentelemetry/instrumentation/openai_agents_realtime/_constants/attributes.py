@@ -63,6 +63,9 @@ class Attributes(StrEnum):
     ERROR_CODE = "error.code"
     ERROR_MESSAGE = "error.message"
 
+    # Metric attributes
+    TOKEN_TYPE = "gen_ai.token.type"
+
     # Rate limits
     RATE_LIMIT_NAME = "rate_limit.name"
     RATE_LIMIT_LIMIT = "rate_limit.limit"
