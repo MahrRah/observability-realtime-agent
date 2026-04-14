@@ -18,6 +18,9 @@ from app.agent import create_agent
 from app.config import AppSettings, ServerSettings
 from app.listener import RealtimeTelemetryListener, WebSocketEventHandler
 
+from opentelemetry import trace
+
+
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
@@ -34,6 +37,22 @@ configure_azure_monitor()
 
 TOKEN_SCOPE = "https://cognitiveservices.azure.com/.default"
 
+from opentelemetry.instrumentation.openai_agents import (
+    OpenAIAgentsInstrumentor,
+)
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+def configure_tracing() -> None:
+    """Ensure tracing exports spans even without auto-instrumentation."""
+
+    current_provider = trace.get_tracer_provider()
+    if isinstance(current_provider, TracerProvider):
+        provider = current_provider
+    else:
+        logger.warning("No TracerProvider found. Tracing will not be available.")
+
+    OpenAIAgentsInstrumentor().instrument(tracer_provider=provider)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -78,7 +97,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
     session = await runner.run(model_config=model_config)
     async with session:
         logger.info("Session %s starting", session_id)
-        listeners = [WebSocketEventHandler(websocket, session_id), RealtimeTelemetryListener(session_id)]
+        listeners = [WebSocketEventHandler(websocket, session_id)] #, RealtimeTelemetryListener(session_id)]
 
         for listener in listeners:
             session.model.add_listener(listener)
@@ -108,4 +127,5 @@ if __name__ == "__main__":
     import uvicorn
 
     server = ServerSettings()
+    configure_tracing()
     uvicorn.run("app.main:app", host=server.host, port=server.port, reload=True)
