@@ -95,6 +95,7 @@ Navigate to `http://localhost:8000` and click **Connect**.
 │   │       ├── metric.py         # Metric names
 │   │       └── span.py           # Span names
 │   └── listener/
+│       ├── telemetry_context.py  # OTel span context management
 │       ├── telemetry_listener.py # OTel traces + metrics listener
 │       └── websocket_handler.py  # Browser WebSocket relay
 ├── static/                       # Browser frontend
