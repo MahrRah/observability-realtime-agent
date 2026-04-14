@@ -224,11 +224,11 @@ class RealtimeTelemetryListener(RealtimeModelListener):
 
     def _handle_function_call_arguments_done(self, event: ResponseFunctionCallArgumentsDoneEvent) -> None:
         ctx = self._otel.get_span_context(key=event.response_id)
-        span = tracer.start_span(SpanName.FUNCTION_CALL, context=ctx, kind=SpanKind.INTERNAL)
+        function_name = event.name
+        span = tracer.start_span(f"{SpanName.FUNCTION_CALL} {function_name}", context=ctx, kind=SpanKind.INTERNAL)
         call_id = event.call_id or UNKNOWN_ID
         self._otel.start_anchor_span(call_id, span, context=ctx)
 
-        function_name = getattr(event, "name", "unknown")
         if call_id is not UNKNOWN_ID:
             self._function_call_map[call_id] = function_name
 
