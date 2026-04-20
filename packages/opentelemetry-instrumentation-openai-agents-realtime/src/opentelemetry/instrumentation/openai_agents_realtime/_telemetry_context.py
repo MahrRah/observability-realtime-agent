@@ -9,11 +9,11 @@ from opentelemetry.trace import Span, set_span_in_context
 
 logger = logging.getLogger(__name__)
 
-
+_UNSET_SESSION = "unknown"
 class TelemetryContext:
 
-    def __init__(self, session_id: str | None = None, root_span: Span | None = None) -> None:
-        self.session_id: str | None = session_id
+    def __init__(self, root_span: Span | None = None) -> None:
+        self._session_id: str = _UNSET_SESSION
         self.root_span: Span | None = root_span
         self._anchors: dict[str, tuple[Span, Token[Context] | None]] = {}
 

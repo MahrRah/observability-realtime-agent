@@ -48,24 +48,6 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-#: Span attribute key used to discover a session ID from the current span.
-SESSION_ID_ATTRIBUTE = "session.id"
-
-
-def _resolve_session_id() -> str:
-    """Read ``session.id`` from the current span, falling back to a UUID."""
-    span = trace.get_current_span()
-    if hasattr(span, "attributes") and span.attributes:
-        sid = span.attributes.get(SESSION_ID_ATTRIBUTE)
-        if sid:
-            return str(sid)
-    return str(uuid.uuid4())
-
-
-def _default_listener_factory(session: Any) -> RealtimeTelemetryListener:
-    """Create a telemetry listener using the session ID from the current span."""
-    return RealtimeTelemetryListener(session_id=_resolve_session_id())
-
 
 class OpenAIAgentsRealtimeInstrumentor(BaseInstrumentor):
     """Auto-instruments OpenAI Agents SDK realtime sessions with OTel telemetry.
@@ -75,26 +57,18 @@ class OpenAIAgentsRealtimeInstrumentor(BaseInstrumentor):
 
     Usage::
 
-        OpenAIAgentsRealtimeInstrumentor().instrument(
-            listener_factory=lambda session: RealtimeTelemetryListener(
-                session_id=my_context_var.get()
-            ),
+        OpenAIAgentsRealtimeInstrumentor().instrument(),
         )
     """
-
-    _listener_factory: Callable[..., RealtimeTelemetryListener] | None = None
 
     def instrumentation_dependencies(self) -> Collection[str]:
         return _instruments
 
     def _instrument(self, **kwargs: Any) -> None:
-        factory = kwargs.get("listener_factory", _default_listener_factory)
-        self._listener_factory = factory
-
         async def _wrap_run(wrapped, instance, args, kwargs):
             session = await wrapped(*args, **kwargs)
             try:
-                listener = factory(session)
+                listener = RealtimeTelemetryListener()
                 session.model.add_listener(listener)
                 if not hasattr(session, "_auto_telemetry_listeners"):
                     session._auto_telemetry_listeners = []
@@ -123,4 +97,3 @@ class OpenAIAgentsRealtimeInstrumentor(BaseInstrumentor):
             runner_module.RealtimeRunner.run = runner_module.RealtimeRunner.run.__wrapped__
         if hasattr(session_module.RealtimeSession.__aexit__, "__wrapped__"):
             session_module.RealtimeSession.__aexit__ = session_module.RealtimeSession.__aexit__.__wrapped__
-        self._listener_factory = None
